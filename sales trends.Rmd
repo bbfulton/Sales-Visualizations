@@ -80,12 +80,6 @@ There are a few outlier sales that need to be removed or else the data would be 
 scrap <- which(salesdata$item_amount > 50000 & salesdata$sls_psn_code == "032")
 salesdata$item_amount[scrap] <- mean(as.numeric(select(filter(salesdata, sls_psn_code == "032"), item_amount)[,1]))
 ```
-
-```{r}
-s <- seq(1, 2.52, 0.005)
-salesdata$item_amount <- salesdata$item_amount*s
-```
-
 Plotting the results showing the dates of potentially significant business changes and sales trends.
 
 ```{r}
@@ -146,12 +140,6 @@ current.month <- as.yearmon(Sys.Date())
 salesdata <- salesdata %>% mutate(my = as.yearmon(paste(year, month, sep = "-"))) %>%
                            filter(my != current.month)
 ```
-
-```{r}
-s <- seq(1, 4.745, 0.005)
-salesdata$item_amount <- salesdata$item_amount*s
-```
-
 Again, removing outliers.
 
 ```{r}
