@@ -118,11 +118,6 @@ p <- p + theme_economist()
 plot(p)
 ```
 
-
-```{r}
-load("C:\\Fitrix Data Tables for R\\Sales and forecasts\\salesdata.RData")
-```
-
 Aggregating the data in a slightly format than above.
 
 ```{r}
