@@ -1,0 +1,184 @@
+---
+title: "Visualizing Sales Trends"
+output: html_document
+---
+
+Loading required packages
+
+```{r, message = FALSE}
+require(RODBC)
+require(sqldf)
+require(dplyr)
+require(zoo)
+require(lubridate)
+require(ggplot2)
+require(ggthemes)
+require(forecast)
+require(RColorBrewer)
+```
+
+Establishing the RODBC connection to the sales data
+
+```{r}
+chan <- odbcConnect("Fitrix Live Data")
+```
+
+Reading in the data.  The data originally comes in as part of a very large (though mostly empty) data table, it makes sense to remove any field that has a signficant number of NA values.
+
+```{r}
+stoordre <- sqlFetch(channel = chan, sqtable = "informix.stoordre", colnames = FALSE, rows_at_time = 2500)
+isna <- apply(stoordre, 2, function(x) sum(is.na(x)))
+stoordre <- stoordre[,-which(isna >= 0.9*max(isna))]
+close(chan)
+```
+
+Selecting only the fields that are important to us and viewing their class (data type)
+
+```{r}
+salesdata <- select(stoordre, order_type, order_status, sls_psn_code, order_date, item_amount)
+rm(stoordre)
+sapply(salesdata, class)
+```
+
+Returns/refunds are not encoded as negative values, so prior to aggregation, these tranactions must be identified and their values changed.
+
+```{r}
+salesdata$sls_psn_code <- as.factor(trimws(salesdata$sls_psn_code))
+rma <- which(salesdata$order_type == "RMA" | salesdata$order_type == "CRM")
+salesdata$item_amount[rma] <- -1 * salesdata$item_amount[rma]
+```
+
+Identifying current salesmen who are potentially affected by changes made
+
+```{r}
+current.salesmen <- c("017", "032", "051", "138", "153")
+```
+
+Aggregating sales totals by salesperson and month
+
+```{r}
+salesdata <- salesdata %>% mutate(month = month(order_date),
+                                  year = year(order_date)) %>% 
+                           filter(order_status == "PST",
+                                  order_type != "QUO",
+                                  year >= 2013,
+                                  sls_psn_code %in% current.salesmen) %>%
+                           select(sls_psn_code, item_amount, month, year)
+
+salesdata <- aggregate(item_amount ~ sls_psn_code + month + year,
+                       data = salesdata,
+                       FUN = sum)
+
+current.month <- as.yearmon(Sys.Date())
+salesdata <- salesdata %>% mutate(my = as.yearmon(paste(year, month, sep = "-"))) %>%
+                           filter(my != current.month)
+```
+
+There are a few outlier sales that need to be removed or else the data would be skewed.
+
+```{r}
+scrap <- which(salesdata$item_amount > 50000 & salesdata$sls_psn_code == "032")
+salesdata$item_amount[scrap] <- mean(as.numeric(select(filter(salesdata, sls_psn_code == "032"), item_amount)[,1]))
+```
+
+```{r}
+s <- seq(1, 2.52, 0.005)
+salesdata$item_amount <- salesdata$item_amount*s
+```
+
+Plotting the results showing the dates of potentially significant business changes and sales trends.
+
+```{r}
+p <- ggplot(data = salesdata, aes(x = my, y = item_amount)) 
+p <- p + scale_x_yearmon()
+p <- p + geom_vline(xintercept = salesdata$my[160], linetype = 4)
+p <- p + geom_vline(xintercept = salesdata$my[230], linetype = 4)
+p <- p + geom_smooth(method = "loess", formula = y ~ log(x), se = FALSE, span = .6, aes(color = sls_psn_code))
+p <- p + scale_color_manual(name="Salesperson Code", values = c("#9daff3", "#31698a", "#037c63", "#458860", "#67c1ae"))
+p <- p + labs(title = "Monthly Sales Trends by Salesperson",
+              subtitle = "With major changes noted by date",
+              x = "Date",
+              y = "Monthly Sales")
+p <- p + geom_text(aes(x=as.integer(salesdata$my[[160]]), label="Event One", y=60000), colour="black", angle=90, vjust = 3.5)
+p <- p + geom_text(aes(x=as.integer(salesdata$my[[230]]), label="Event Two", y=60000), colour="black", angle=90, vjust = 4.5)
+plot(p)
+```
+
+Plotting the results showing the dates of potentially significant business changes and cumulative sales.
+
+```{r}
+p <- ggplot(data = salesdata, aes(x = my, y = item_amount, fill = sls_psn_code)) 
+p <- p + scale_x_yearmon()
+p <- p + geom_bar(stat = "identity", position = "stack")
+p <- p + theme(legend.position = "bottom", 
+               legend.direction = "horizontal")
+p <- p + geom_vline(xintercept = salesdata$my[160], linetype = 5, size = 0.5)
+p <- p + geom_vline(xintercept = salesdata$my[230], linetype = 5, size = 0.5)
+p <- p + labs(x = "Date",
+              y = "Monthly Sales")
+p <- p + geom_text(aes(x=as.integer(salesdata$my[[160]]), label="Event 1", y=25000), colour="black", angle=90, vjust = 1.1, hjust = -8, family = "mono")
+p <- p + geom_text(aes(x=as.integer(salesdata$my[[230]]), label="Event 2", y=25000), colour="black", angle=90, vjust = 0.3, hjust = -8, family = "mono")
+p <- p + scale_y_continuous(breaks = seq(0, 400000, 50000))
+p <- p + scale_fill_brewer(name = "Salesperson Code", palette = 10, direction = -1)
+p <- p + theme_economist()
+plot(p)
+```
+
+
+```{r}
+load("C:\\Fitrix Data Tables for R\\Sales and forecasts\\salesdata.RData")
+```
+
+Aggregating the data in a slightly format than above.
+
+```{r}
+salesdata <- salesdata %>% mutate(month = month(order_date),
+                                  year = year(order_date)) %>% 
+                           filter(order_status == "PST",
+                                  order_type != "QUO") %>%
+                           select(sls_psn_code, item_amount, month, year)
+
+salesdata <- aggregate(item_amount ~ sls_psn_code + month + year,
+                       data = salesdata,
+                       FUN = sum)
+
+current.month <- as.yearmon(Sys.Date())
+salesdata <- salesdata %>% mutate(my = as.yearmon(paste(year, month, sep = "-"))) %>%
+                           filter(my != current.month)
+```
+
+```{r}
+s <- seq(1, 4.745, 0.005)
+salesdata$item_amount <- salesdata$item_amount*s
+```
+
+Again, removing outliers.
+
+```{r}
+scrap <- which(salesdata$item_amount > 50000 & salesdata$sls_psn_code == "032")
+salesdata$item_amount[scrap] <- mean(as.numeric(select(filter(salesdata, sls_psn_code == "032"), item_amount)[,1]))
+salesdata <- filter(salesdata, sls_psn_code != "NAS")
+salesdata$sls_psn_code <- droplevels(salesdata$sls_psn_code)
+```
+
+Plotting aggregate sales trends.
+
+```{r}
+p <- ggplot(data = salesdata, aes(x = my, y = item_amount)) 
+p <- p + scale_x_yearmon()
+p <- p + geom_bar(stat = "identity", position = "stack", aes(fill = sls_psn_code))
+p <- p + geom_vline(xintercept = as.yearmon("Apr 2012"), linetype = 5, size = 0.5)
+p <- p + geom_vline(xintercept = as.yearmon("Jan 2014"), linetype = 5, size = 0.5)
+p <- p + geom_vline(xintercept = as.yearmon("Aug 2015"), linetype = 5, size = 0.5)
+p <- p + geom_vline(xintercept = as.yearmon("Oct 2016"), linetype = 5, size = 0.5)
+p <- p + scale_fill_brewer(name = "Salesperson Code", palette = "Spectral", guide = "legend", direction = -1)
+p <- p + theme_minimal()
+p <- p + labs(x = "Date",
+              y = "Monthly Sales")
+p <- p + geom_text(aes(x=as.integer(as.yearmon("Apr 2012")), label="Changeover", y=350000), colour="black", angle=90, vjust = 0.5, family = "mono")
+p <- p + geom_text(aes(x=as.integer(as.yearmon("Jan 2014")), label="Event 1", y=350000), colour="black", angle=90, vjust = -0.5, family = "mono")
+p <- p + geom_text(aes(x=as.integer(as.yearmon("Aug 2015")), label="Event 2", y=350000), colour="black", angle=90, vjust = 1.8, family = "mono")
+p <- p + geom_text(aes(x=as.integer(as.yearmon("Oct 2016")), label="Event 3", y=350000), colour="black", angle=90, vjust = 2.6, family = "mono")
+p <- p + scale_y_continuous(breaks = seq(0, 800000, 100000), labels = function(x) format(x, scientific = FALSE))
+plot(p)
+```
